@@ -1,0 +1,302 @@
+diff --git a/pseint/Ejecutar.cpp b/pseint/Ejecutar.cpp
+index 2482083..63851d7 100644
+--- a/pseint/Ejecutar.cpp
++++ b/pseint/Ejecutar.cpp
+@@ -16,12 +16,19 @@ using namespace std;
+ // Las variables aux?, tmp? y tipo quedaron del código viejo, se reutilizan para diferentes
+ // cosas, por lo que habría que analizarlas y cambiarlas por varias otras variables con scope y 
+ // nombres mas claros... por ahora cambie las obvias y reduje el scope de las que quedaron, pero falta...
++bool retornando=false, retorno_ejecutado=false; // pseint-movil
++
+ void Ejecutar(int LineStart, int LineEnd) {
+ 	// variables auxiliares
+ 	string cadena;
+ 	// Ejecutar el bloque
+ 	int line=LineStart-1;
+ 	while (true) {
++		if (retornando) { // pseint-movil: se ejecutó RETORNAR
++			if (LineEnd!=-1) break; // salir del bloque (si, mientras, para...)
++			retornando=false; // ya en el nivel de la función: saltar al FinFuncion
++			while (programa[line+1]!=IT_FINSUBPROCESO && programa[line+1]!=IT_FINPROCESO) line++;
++		}
+ 		line++;
+ 		if (LineEnd!=-1 && line>LineEnd) break; 
+ 		cadena=programa[line].instruccion;
+@@ -59,6 +66,27 @@ void Ejecutar(int LineStart, int LineEnd) {
+ 				_sub_raise();
+ 				if (for_test) cout<<"***EsperarTecla***"<<endl; else getKey();
+ 				_sub_wait();
++			} else if (instruction_type==IT_RETORNAR) { // pseint-movil
++				string expr=cadena.substr(8); expr.erase(expr.size()-1); // cortar "RETORNAR" y el ";"
++				while (expr.size() && expr[0]==' ') expr.erase(0,1);
++				const Funcion *func=memoria->GetFuncion();
++				if (expr.size() && func && func->nombres[0].size()) {
++					const string &var=func->nombres[0];
++					_sub(line,string("Se evalúa la expresión a retornar: ")+expr);
++					DataValue result = Evaluar(expr);
++					tipo_var tipo_var_ret = memoria->LeerTipo(var);
++					if (!tipo_var_ret.can_be(result.type))
++						ExeError(125,"No coinciden los tipos.");
++					else if (tipo_var_ret==vt_numerica_entera && tipo_var_ret.rounded && result.GetAsInt()!=result.GetAsReal())
++						ExeError(314,"No coinciden los tipos, el valor a retornar debe ser un entero.");
++					_sub(line,string("Se retorna el valor ")+result.GetForUser());
++					result.type.rounded=false;
++					memoria->DefinirTipo(var,result.type);
++					memoria->EscribirValor(var,result);
++				} else {
++					_sub(line,"Se sale del subproceso");
++				}
++				retorno_ejecutado=retornando=true;
+ 			} else if (instruction_type==IT_INVOCAR) {
+ 				string llamada=cadena.substr(8); llamada.erase(llamada.length()-1,1); // cortar el "invocar" y el ";"
+ 				tipo_var tipo=vt_desconocido; size_t p=llamada.find('(',0);
+@@ -380,6 +408,7 @@ void Ejecutar(int LineStart, int LineEnd) {
+ 					while (condition_is_true) {
+ 						_sub(line,"La condición es Verdadera, se iniciará una iteración.");
+ 						Ejecutar(line+1,line_finmientras-1);
++						if (retornando) break; // pseint-movil
+ 						_pos(line);
+ 						_sub(line,string("Se evalúa nuevamente la condición: ")+cadena);
+ 						condition_is_true = Evaluar(cadena,vt_logica).GetAsBool();
+@@ -415,6 +444,7 @@ void Ejecutar(int LineStart, int LineEnd) {
+ 				bool should_continue_iterating=true;
+ 				while (should_continue_iterating) {
+ 					Ejecutar(line+1,line_hastaque-1);
++					if (retornando) { should_continue_iterating=false; break; } // pseint-movil
+ 					// evaluar condicion y seguir
+ 					_pos(line_hastaque);
+ 					_sub(line_hastaque,string("Se evalúa la condición: ")+cadena);
+@@ -485,6 +515,7 @@ void Ejecutar(int LineStart, int LineEnd) {
+ 					if ( positivo ? (res_cont.GetAsReal()>res_fin.GetAsReal()) : (res_cont.GetAsReal()<res_fin.GetAsReal()) ) break;
+ 					_sub(line,"La expresión fue Verdadera, se iniciará una iteración.");
+ 					Ejecutar(line+1,line_finpara-1);
++					if (retornando) break; // pseint-movil
+ 					_pos(line);
+ 					res_cont = Evaluar(contador,vt_numerica); // pueden haber cambiado a para el contador!!!
+ 					memoria->EscribirValor(contador,DataValue::MakeReal(res_cont.GetAsReal()+res_paso.GetAsReal()));
+@@ -543,6 +574,7 @@ void Ejecutar(int LineStart, int LineEnd) {
+ 					// asignar la variable del bucle en el elemento
+ 					memoria->DefinirTipo(elemento,memoria->LeerTipo(aux1));
+ 					memoria->EscribirValor(elemento,memoria->LeerValor(aux1));
++					if (retornando) break; // pseint-movil
+ 				}
+ 				memoria->Desinicializar(aux1);
+ 				line=line_finpara; // linea del finpara
+diff --git a/pseint/Ejecutar.h b/pseint/Ejecutar.h
+index ba9d834..7326eaf 100644
+--- a/pseint/Ejecutar.h
++++ b/pseint/Ejecutar.h
+@@ -3,5 +3,9 @@
+ 
+ void Ejecutar(int LineStart, int LineEnd=-1);
+ 
++// pseint-movil: RETORNAR
++extern bool retornando; // se ejecutó RETORNAR y se están cerrando los bloques hasta el fin de la función
++extern bool retorno_ejecutado; // la función actual llegó a ejecutar un RETORNAR
++
+ #endif
+ 
+diff --git a/pseint/LangSettings.cpp b/pseint/LangSettings.cpp
+index 519a942..0b4277b 100644
+--- a/pseint/LangSettings.cpp
++++ b/pseint/LangSettings.cpp
+@@ -144,6 +144,13 @@ void LangSettings::init() {
+ 			"contador dentro de un para, y adicionalmente la variable deja de estar inicializada "
+ 			"una vez finalizado el bucle."
+ 		);
++	data[LS_ALLOW_RETURN].Set("allow_return",					false,
++			"Permitir Retornar (estilo Java)",
++			"Con esta opción habilitada las funciones pueden devolver su resultado con la "
++			"instrucción \"Retornar <expresión>\", que además termina la función en ese "
++			"momento (como return en Java o Python). Ej: \"Funcion Sumar(a,b) Retornar a+b "
++			"FinFuncion\". En un subproceso que no devuelve nada, \"Retornar\" solo lo termina."
++		);
+ #ifdef DEBUG
+ 	for(int i=0;i<LS_COUNT;i++) { 
+ 		if (!data[i].nombre) cerr<<"ERROR!!! campo no inicializado en LangSettings::data["<<i<<"]"<<endl;
+diff --git a/pseint/LangSettings.h b/pseint/LangSettings.h
+index 1822b07..9541f33 100644
+--- a/pseint/LangSettings.h
++++ b/pseint/LangSettings.h
+@@ -46,6 +46,7 @@ enum LS_ENUM {
+ 	LS_ALLOW_FOR_EACH,
+ 	LS_PREFER_REPEAT_WHILE,
+ 	LS_PROTECT_FOR_COUNTER,
++	LS_ALLOW_RETURN, // pseint-movil
+ 	LS_COUNT 
+ };
+ 
+diff --git a/pseint/SynCheck.cpp b/pseint/SynCheck.cpp
+index fac57cd..65b846d 100644
+--- a/pseint/SynCheck.cpp
++++ b/pseint/SynCheck.cpp
+@@ -281,7 +281,7 @@ int is_valid_operator(char act, char next, int &len, what_extra &type) {
+ // verificar operadores, constantes y parentesis, y borrar los espacios en blanco que sobran entre ellos
+ static void SynCheckAux3(const int &x, string &cadena, int &errores,InstructionType instruction_type, int &flag_pyc) {
+ 	if (preserve_comments && (LeftCompare(cadena,"#comment ")||LeftCompare(cadena,"#comment-inline "))) return;
+-	bool allow_multiple_expresions=instruction_type!=IT_DEOTROMODO && instruction_type!=IT_ASIGNAR;
++	bool allow_multiple_expresions=instruction_type!=IT_DEOTROMODO && instruction_type!=IT_ASIGNAR && instruction_type!=IT_RETORNAR;
+ 	what w=w_null; what_extra wext=w_other;
+ 	int parentesis=0, csize; bool comillas=false;
+ 	for (int i=0;i<(csize=(int)cadena.size());i++) {
+@@ -643,6 +643,8 @@ int SynCheck(int linea_from, int linea_to) {
+ 				if (!ignore_logic_errors&&cadena==";") { SynError (315,"FINSUBPROCESO/FINFUNCION no lleva punto y coma."); errores++; }
+ 			} else if (first_word=="REPETIR" || (lang[LS_LAZY_SYNTAX] && first_word=="HACER")) {
+ 				instruction_type=IT_REPETIR; bucles.push_back(programa.GetLoc(x,IT_REPETIR));
++			} else if (lang[LS_ALLOW_RETURN] && first_word=="RETORNAR") { // pseint-movil
++				instruction_type=IT_RETORNAR;
+ 			} else if (first_word=="DEFINIR") {
+ 				instruction_type=IT_DEFINIR;
+ 			} else {
+@@ -783,7 +785,8 @@ int SynCheck(int linea_from, int linea_to) {
+ 			bool lleva_pyc = instruction_type==IT_DIMENSION || instruction_type==IT_DEFINIR ||
+ 				             instruction_type==IT_ESCRIBIR || instruction_type==IT_ESCRIBIRNL || 
+ 							 instruction_type==IT_ASIGNAR || instruction_type==IT_LEER || instruction_type==IT_ESPERAR || 
+-							 instruction_type==IT_ESPERARTECLA || instruction_type==IT_BORRARPANTALLA || instruction_type==IT_INVOCAR;
++							 instruction_type==IT_ESPERARTECLA || instruction_type==IT_BORRARPANTALLA || instruction_type==IT_INVOCAR ||
++							 instruction_type==IT_RETORNAR;
+ 			if (lleva_pyc) {
+ 				if (cadena[cadena.size()-1]!=';') {
+ 					if (lang[LS_FORCE_SEMICOLON])
+@@ -1375,6 +1378,24 @@ int SynCheck(int linea_from, int linea_to) {
+ 				else
+ 						{SynError (106,"Instrucción no válida."); errores++;}
+ 			}
++			// pseint-movil: RETORNAR [expresion]
++			if (instruction_type==IT_RETORNAR) {
++				string expr=cadena;
++				if (expr.size() && expr[expr.size()-1]==';') expr.erase(expr.size()-1);
++				while (expr.size() && expr[0]==' ') expr.erase(0,1);
++				while (expr.size() && expr[expr.size()-1]==' ') expr.erase(expr.size()-1);
++				if (!current_func || current_func->id==main_process_name) {
++					SynError (330,"RETORNAR solo puede usarse dentro de una función."); errores++;
++				} else if (current_func->nombres[0].empty()) {
++					if (expr.size()) { SynError (331,"Este subproceso no devuelve ningún valor."); errores++; }
++				} else if (expr.empty()) {
++					SynError (332,"Falta el valor a retornar."); errores++;
++				} else if (Lerrores==errores) {
++					DataValue res=EvaluarSC(expr);
++					if (current_func->usa_retornar && !res.IsError() && !memoria->DefinirTipo(current_func->nombres[0],res.type))
++						{ SynError (334,"Esta función ya retorna valores de otro tipo."); errores++; }
++				}
++			}
+ 			// llama directa a un subproceso
+ 			if (instruction_type==IT_INVOCAR) {
+ 				int p=0;
+@@ -1474,6 +1495,31 @@ int ParseInspection(string &cadena) {
+ 	return errores+flag_pyc;
+ }
+ 
++// pseint-movil: busca en el cuerpo de la función (desde la línea siguiente a la
++// cabecera) un RETORNAR seguido de una expresión
++static bool TieneRetornarConValor(int linea) {
++	for (int i=linea+1;i<programa.GetSize();i++) {
++		string s=programa[i].instruccion;
++		string fw=FirstWord(s); FixAcentos(fw);
++		if (fw=="FINFUNCION"||fw=="FINSUBPROCESO"||fw=="FINSUBALGORITMO"||fw=="FUNCION"||
++			fw=="SUBPROCESO"||fw=="SUBALGORITMO"||fw=="PROCESO"||fw=="ALGORITMO") return false;
++		int l=s.size();
++		for (int j=0;j<l;j++) {
++			if (s[j]=='\'') { while (++j<l && s[j]!='\''); continue; }
++			if (s.compare(j,8,"RETORNAR")!=0) continue;
++			if ((j>0 && parteDePalabra(s[j-1])) || (j+8<l && parteDePalabra(s[j+8]))) continue;
++			int k=j+8; while (k<l && s[k]==' ') k++;
++			if (k>=l || s[k]==';') continue;
++			string next=FirstWord(s.substr(k)); FixAcentos(next);
++			if (next=="FINSI"||next=="SINO"||next=="FINMIENTRAS"||next=="FINPARA"||next=="FINSEGUN"||
++				next=="HASTA"||next=="MIENTRAS"||next=="FINFUNCION"||next=="FINSUBPROCESO"||
++				next=="FINSUBALGORITMO"||next=="FIN") continue;
++			return true;
++		}
++	}
++	return false;
++}
++
+ int SynCheck() {
+ 	programa.PushBack(""); // linea en blanco al final, para que era?
+ 	programa.Insert(0,""); // linea en blanco al principio, para que era?
+@@ -1534,6 +1580,9 @@ int SynCheck() {
+ 				if (s==fw) s+=" ";
+ 				Funcion *func=ParsearCabeceraDeSubProceso(s.substr(fw.size()+1),es_proceso,errores);
+ 				func->userline_start=Inter.GetLineNumber();
++				if (lang[LS_ALLOW_RETURN] && !es_proceso && func->nombres[0].empty() && TieneRetornarConValor(i)) { // pseint-movil
++					func->nombres[0]="RETORNAR"; func->tipos[0]=vt_desconocido; func->usa_retornar=true;
++				}
+ 				subprocesos[func->id]=func;
+ 				if (es_proceso) { // si es el proceso principal, verificar que sea el unico, y guardar el nombre en main_process_name para despues saber a cual llamar
+ 					if (have_proceso) { SynError (272,"Solo puede haber un Proceso."); errores++;}
+diff --git a/pseint/new_evaluar.cpp b/pseint/new_evaluar.cpp
+index 47e6e93..02a9928 100644
+--- a/pseint/new_evaluar.cpp
++++ b/pseint/new_evaluar.cpp
+@@ -305,7 +305,11 @@ DataValue EvaluarFuncion(const Funcion *func, const string &argumentos, const ti
+ 				}
+ 			}
+ //			Inter.OnFunctionIn(); // ahora se encarga Ejecutar
++			bool retorno_previo=retorno_ejecutado; retorno_ejecutado=false; // pseint-movil
+ 			Ejecutar(func->line_start);
++			bool retorno_ok=retorno_ejecutado; retorno_ejecutado=retorno_previo;
++			if (func->usa_retornar && !retorno_ok)
++				ExeError(333,string("La función ")+GetNombreFuncion(func)+" terminó sin ejecutar RETORNAR.");
+ //			Inter.OnFunctionOut(); // ahora se encarga Ejecutar
+ 			if (func->nombres[0].size()) {
+ 				ret = memoria->LeerValor(func->nombres[0]);
+diff --git a/pseint/new_funciones.h b/pseint/new_funciones.h
+index 4e61510..00ea5ae 100644
+--- a/pseint/new_funciones.h
++++ b/pseint/new_funciones.h
+@@ -24,6 +24,7 @@ struct Funcion {
+ 	int userline_start, userline_end; // linea del pseudocodigo original donde empieza y termina la funcion (para pasarsela a la lista de variables del editor)
+ 	void AddArg(string arg, PASAJE por=PP_DESCONOCIDO) { nombres.push_back(arg); tipos.push_back(vt_desconocido); pasajes.push_back(por); cant_arg++; }
+ 	void SetLastPasaje(PASAJE por) { pasajes[pasajes.size()-1]=por; } // para modificar el tipo de pasaje del último argumento insertado con AddArg
++	bool usa_retornar = false; // pseint-movil: devuelve su valor con RETORNAR (sin variable en la cabecera)
+ 	Memoria *memoria; // instancia de la clase memoria que se usa para el analisis sintático
+ 	Funcion(int line):func(NULL),line_start(line),userline_start(-1),userline_end(-1) { 
+ 		AddArg(""); cant_arg=0; memoria=NULL;
+diff --git a/pseint/new_memoria.h b/pseint/new_memoria.h
+index 9ea1a17..685a92c 100644
+--- a/pseint/new_memoria.h
++++ b/pseint/new_memoria.h
+@@ -60,6 +60,7 @@ class Memoria {
+ 	const Funcion *funcion; // scope
+ public:
+ 	// cppcheck-suppress uninitMemberVar
++	const Funcion *GetFuncion() const { return funcion; } // pseint-movil
+ 	Memoria(const Funcion *parent):funcion(parent){} // guarda el puntero a su scope para usar en EsArgumento
+ 	bool EsArgumento(const string &nom) const; // determina si un nombre dado es uno de los argumentos de la función actual o no
+ 	void HardReset() {
+diff --git a/pseint/new_programa.h b/pseint/new_programa.h
+index a89aa7f..7ed78fd 100644
+--- a/pseint/new_programa.h
++++ b/pseint/new_programa.h
+@@ -12,7 +12,8 @@ enum InstructionType {
+ 	IT_ESPERARTECLA, IT_ESPERAR, IT_BORRARPANTALLA, IT_INVOCAR,
+ 	IT_MIENTRAS, IT_FINMIENTRAS, IT_REPETIR, IT_HASTAQUE, IT_MIENTRASQUE,
+ 	IT_SI, IT_ENTONCES, IT_SINO, IT_FINSI, IT_SEGUN, IT_OPCION, IT_DEOTROMODO, IT_FINSEGUN,
+-	IT_PARA, IT_PARACADA, IT_FINPARA
++	IT_PARA, IT_PARACADA, IT_FINPARA,
++	IT_RETORNAR // pseint-movil
+ };
+ 
+ struct InstruccionLoc {
+@@ -119,6 +120,7 @@ public:
+ 		if (type==IT_PARA) return aux_type2str("PARA",args);
+ 		if (type==IT_PARACADA) return aux_type2str("PARACADA",args);
+ 		if (type==IT_FINPARA) return aux_type2str("FINPARA",args);
++		if (type==IT_RETORNAR) return aux_type2str("RETORNAR",args);
+ 		return args;
+ 	}
+ };
+diff --git a/pseint/utils.cpp b/pseint/utils.cpp
+index 8b833bf..6d83a02 100644
+--- a/pseint/utils.cpp
++++ b/pseint/utils.cpp
+@@ -134,6 +134,8 @@ bool CheckVariable(string str, int errcode) {
+ 		ret=false;
+ 	else if (lang[LS_ENABLE_USER_FUNCTIONS] && (str=="FINSUBPROCESO" || str=="SUBPROCESO" ||str=="FINFUNCION" || str=="FUNCION" ||str=="FINFUNCIÓN" || str=="FUNCIÓN") )
+ 		ret=false;
++	else if (lang[LS_ALLOW_RETURN] && str=="RETORNAR") // pseint-movil
++		ret=false;
+ 	if (!ret && errcode!=-1) SynError (errcode,string("Identificador no válido (")+str+")."); 
+ 	return ret;
+ }

@@ -1,0 +1,27 @@
+# Perfil propio de PSeInt Móvil (no existe en PSeInt de escritorio)
+desc=Igual al perfil Flexible, pero las funciones devuelven su resultado con "Retornar", como en Java o Python. Ej: Funcion Sumar(a, b) / Retornar a + b / FinFuncion. Ojo: los programas que usen Retornar no funcionan en PSeInt de la computadora.
+version=20210407
+allow_dinamyc_dimensions=1
+allow_concatenation=1
+force_init_vars=0
+force_semicolon=0
+word_operators=1
+lazy_syntax=1
+base_zero_arrays=0
+overload_equal=1
+coloquial_conditions=1
+force_define_vars=0
+use_nassi_shneiderman=0
+use_alternative_io_shapes=0
+enable_string_functions=1
+enable_user_functions=1
+integer_only_switch=0
+deduce_negative_for_step=1
+allow_accents=1
+prefer_algoritmo=1
+prefer_funcion=1
+allow_repeat_while=1
+allow_for_each=1
+prefer_repeat_while=0
+protect_for_counter=0
+allow_return=1

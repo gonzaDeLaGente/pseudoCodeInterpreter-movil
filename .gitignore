@@ -1,0 +1,12 @@
+node_modules/
+android/
+# Se generan con core/build.sh (y en GitHub Actions)
+web/pseint.wasm
+web/perfiles.json
+web/ejemplos.json
+web/fonts/
+pseint-src/
+wasi-sdk/
+*.apk
+*.jks
+.DS_Store

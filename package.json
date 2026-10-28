@@ -1,0 +1,25 @@
+{
+  "name": "pseint-movil",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "PSeInt para el celular: el interprete original compilado a WebAssembly",
+  "license": "GPL-2.0-only",
+  "scripts": {
+    "build:wasm": "bash core/build.sh",
+    "test": "node tests/run-tests.mjs \"$PSEINT_SRC/test\"",
+    "serve": "npx --yes http-server web -c-1 -p 8080",
+    "android:add": "cap add android && python3 core/android_icons.py android",
+    "android:sync": "cap sync android"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.3",
+    "binaryen": "^132.0.0"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/core": "^8.5.3",
+    "@capacitor/filesystem": "^8.1.4",
+    "@capacitor/share": "^8.0.3"
+  }
+}

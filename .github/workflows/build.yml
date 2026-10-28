@@ -1,0 +1,180 @@
+name: Compilar PSeInt Móvil
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      fuente:
+        description: "De dónde bajar el código de PSeInt"
+        type: choice
+        default: espejo
+        options:
+          - espejo        # copia en GitHub, versión 20210609 (probada)
+          - sourceforge   # repositorio oficial, última versión
+
+permissions:
+  contents: write   # para adjuntar el APK a las versiones (tags v*)
+  pages: write
+  id-token: write
+
+env:
+  WASI_SDK_VERSION: "25"
+  PSEINT_ESPEJO: https://github.com/miguelinux/pseint.git
+  PSEINT_ESPEJO_COMMIT: 4cade4dbc963e0a057e94acadd3d4993360991ae
+  PSEINT_OFICIAL: https://git.code.sf.net/p/pseint/code
+
+jobs:
+  web:
+    name: Intérprete (WebAssembly) y app web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Bajar el código de PSeInt
+        run: |
+          if [ "${{ inputs.fuente }}" = "sourceforge" ]; then
+            git clone --depth 1 "$PSEINT_OFICIAL" pseint-src
+          else
+            git clone "$PSEINT_ESPEJO" pseint-src
+            git -C pseint-src checkout "$PSEINT_ESPEJO_COMMIT"
+          fi
+          echo "Versión de PSeInt: $(cat pseint-src/bin/version 2>/dev/null || echo desconocida)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Instalar wasi-sdk
+        id: wasi
+        uses: actions/cache@v4
+        with:
+          path: wasi-sdk
+          key: wasi-sdk-${{ env.WASI_SDK_VERSION }}
+
+      - if: steps.wasi.outputs.cache-hit != 'true'
+        run: |
+          curl -sSL -o wasi.tgz "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION}/wasi-sdk-${WASI_SDK_VERSION}.0-x86_64-linux.tar.gz"
+          mkdir wasi-sdk && tar xzf wasi.tgz -C wasi-sdk --strip-components=1
+
+      - name: Compilar PSeInt a WebAssembly
+        run: PSEINT_SRC=pseint-src WASI_SDK="$PWD/wasi-sdk" bash core/build.sh
+
+      - name: Pruebas oficiales de PSeInt
+        run: node tests/run-tests.mjs pseint-src/test
+
+      - name: Marcar la versión (para que los celulares se actualicen)
+        run: sed -i "s/const VERSION = \"dev\"/const VERSION = \"${GITHUB_SHA::8}\"/" web/sw.js
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web
+          path: web
+
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+  pages:
+    name: Publicar en GitHub Pages
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: web
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+  apk:
+    name: APK de Android
+    needs: web
+    runs-on: ubuntu-latest
+    env:
+      HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: web
+          path: web
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: npm ci && pip install pillow
+
+      - name: Crear el proyecto Android
+        run: |
+          npx cap add android
+          python3 core/android_icons.py android
+          # versionCode creciente para que Android acepte las actualizaciones
+          sed -i "s/versionCode 1$/versionCode ${{ github.run_number }}/" android/app/build.gradle
+          sed -i "s/versionName \"1.0\"/versionName \"0.1.${{ github.run_number }}\"/" android/app/build.gradle
+          npx cap sync android
+
+      - name: Compilar APK firmado
+        if: env.HAS_KEYSTORE == 'true'
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/release.jks"
+          export KEYSTORE_FILE="$RUNNER_TEMP/release.jks"
+          # Gradle firma con los esquemas v1 y v2 que exige Android
+          cat >> android/app/build.gradle <<'GRADLE'
+
+          android {
+              signingConfigs {
+                  release {
+                      storeFile file(System.getenv("KEYSTORE_FILE"))
+                      storePassword System.getenv("KEYSTORE_PASS")
+                      keyAlias System.getenv("KEY_ALIAS")
+                      keyPassword System.getenv("KEY_PASS")
+                  }
+              }
+              buildTypes { release { signingConfig signingConfigs.release } }
+          }
+          GRADLE
+          (cd android && ./gradlew --no-daemon assembleRelease)
+          cp android/app/build/outputs/apk/release/app-release.apk pseint-movil.apk
+          echo "✅ APK firmado con tu clave: se puede actualizar sin desinstalar." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Compilar APK de prueba (sin firma propia)
+        if: env.HAS_KEYSTORE != 'true'
+        run: |
+          (cd android && ./gradlew --no-daemon assembleDebug)
+          cp android/app/build/outputs/apk/debug/app-debug.apk pseint-movil.apk
+          echo "⚠️ APK de prueba: cada compilación usa una firma distinta, así que para instalar una versión nueva hay que desinstalar la anterior (y se pierden los programas guardados). Configurá la firma propia (ver README)." >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pseint-movil-apk
+          path: pseint-movil.apk
+
+      - name: Adjuntar a la versión
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: pseint-movil.apk

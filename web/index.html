@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#0f766e">
+  <meta name="description" content="Escribí y ejecutá pseudocódigo de PSeInt en el celular, sin conexión.">
+  <title>PSeInt Móvil</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 5v14l11-7z" fill="currentColor"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
+    <symbol id="i-redo" viewBox="0 0 24 24"><path d="m15 14 5-5-5-5M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></symbol>
+    <symbol id="i-tab" viewBox="0 0 24 24"><path d="M4 12h12M12 8l4 4-4 4M20 6v12"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+    <symbol id="i-ok" viewBox="0 0 24 24"><path d="m5 12 5 5 9-10"/></symbol>
+    <symbol id="i-err" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.5"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></symbol>
+  </svg>
+
+  <header class="topbar">
+    <button class="icon-btn" id="btn-menu" aria-label="Menú"><svg><use href="#i-menu"/></svg></button>
+    <button class="prog-name" id="prog-name" aria-label="Cambiar nombre del programa">Sin título</button>
+    <button class="syntax-status" id="syntax-status" hidden></button>
+    <button class="run-btn" id="btn-run"><svg><use href="#i-play"/></svg><span>Ejecutar</span></button>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" id="tab-code" aria-selected="true">Código</button>
+    <button role="tab" id="tab-run" aria-selected="false">Ejecución <span class="dot" hidden></span></button>
+  </nav>
+
+  <main class="panes" data-view="code">
+    <section class="pane pane-code" aria-label="Editor">
+      <div id="editor"></div>
+      <div class="keybar" id="keybar">
+        <div class="keyrow" id="row-symbols">
+          <button class="kb kb-icon" data-action="undo" aria-label="Deshacer"><svg><use href="#i-undo"/></svg></button>
+          <button class="kb kb-icon" data-action="redo" aria-label="Rehacer"><svg><use href="#i-redo"/></svg></button>
+          <button class="kb kb-icon" data-action="tab" aria-label="Tabulación"><svg><use href="#i-tab"/></svg></button>
+          <button class="kb kb-strong" data-ins=" <- ">&lt;-</button>
+          <button class="kb" data-ins='""' data-back="1">" "</button>
+          <button class="kb" data-ins="()" data-back="1">( )</button>
+          <button class="kb" data-ins="[]" data-back="1">[ ]</button>
+          <button class="kb" data-ins="=">=</button>
+          <button class="kb" data-ins="&lt;&gt;">&lt;&gt;</button>
+          <button class="kb" data-ins="&lt;">&lt;</button>
+          <button class="kb" data-ins="&gt;">&gt;</button>
+          <button class="kb" data-ins="&lt;=">&lt;=</button>
+          <button class="kb" data-ins="&gt;=">&gt;=</button>
+          <button class="kb" data-ins="+">+</button>
+          <button class="kb" data-ins="-">−</button>
+          <button class="kb" data-ins="*">*</button>
+          <button class="kb" data-ins="/">/</button>
+          <button class="kb" data-ins="^">^</button>
+          <button class="kb" data-ins=",">,</button>
+          <button class="kb" data-ins=";">;</button>
+          <button class="kb" data-ins=":">:</button>
+          <button class="kb" data-ins="// ">//</button>
+        </div>
+        <div class="keyrow keyrow-words" id="row-templates"></div>
+      </div>
+    </section>
+
+    <section class="pane pane-run" aria-label="Ejecución">
+      <div class="run-head">
+        <span class="run-state" id="run-state">Todavía no ejecutaste el programa</span>
+        <button class="chip" id="btn-rerun" hidden><svg><use href="#i-play"/></svg>De nuevo</button>
+      </div>
+      <div class="console" id="console" role="log" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <!-- Menu lateral -->
+  <dialog class="drawer" id="dlg-menu">
+    <div class="drawer-head">
+      <img src="icons/icon-192.png" alt="" width="40" height="40">
+      <div><strong>PSeInt Móvil</strong><small id="menu-profile"></small></div>
+    </div>
+    <nav class="menu-list">
+      <button data-menu="new">Programa nuevo</button>
+      <button data-menu="programs">Mis programas</button>
+      <button data-menu="open">Abrir archivo .psc</button>
+      <button data-menu="save">Guardar / compartir .psc</button>
+      <hr>
+      <button data-menu="examples">Ejemplos</button>
+      <button data-menu="profile">Perfil del lenguaje</button>
+      <div class="menu-font">
+        <span>Tamaño de letra</span>
+        <button data-menu="font-" aria-label="Achicar letra">A−</button>
+        <button data-menu="font+" aria-label="Agrandar letra">A+</button>
+      </div>
+      <hr>
+      <button data-menu="about">Acerca de</button>
+    </nav>
+  </dialog>
+
+  <!-- Hoja generica para listas (programas, ejemplos, perfiles) -->
+  <dialog class="sheet" id="dlg-list">
+    <div class="sheet-head">
+      <button class="icon-btn" data-close aria-label="Cerrar"><svg><use href="#i-back"/></svg></button>
+      <h2 id="list-title"></h2>
+    </div>
+    <input type="search" class="sheet-search" id="list-search" placeholder="Buscar…" hidden>
+    <p class="sheet-hint" id="list-hint" hidden></p>
+    <div class="sheet-list" id="list-items"></div>
+  </dialog>
+
+  <dialog class="modal" id="dlg-prompt">
+    <form method="dialog">
+      <h2 id="prompt-title"></h2>
+      <input type="text" id="prompt-input" autocomplete="off" spellcheck="false">
+      <div class="modal-actions">
+        <button value="cancel" formnovalidate>Cancelar</button>
+        <button value="ok" class="primary">Aceptar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="modal" id="dlg-about">
+    <form method="dialog">
+      <h2>PSeInt Móvil</h2>
+      <p>Una versión <strong>no oficial</strong> de PSeInt para el celular. Ejecuta el
+        intérprete original de PSeInt, compilado a WebAssembly, así que los programas se
+        comportan igual que en la computadora. Funciona sin conexión.</p>
+      <p>PSeInt fue creado por Pablo Novara y es software libre (GPL).
+        <a href="https://pseint.sourceforge.net" target="_blank" rel="noopener">pseint.sourceforge.net</a></p>
+      <p class="small">Esta adaptación también es software libre bajo la misma licencia.</p>
+      <div class="modal-actions"><button value="ok" class="primary">Cerrar</button></div>
+    </form>
+  </dialog>
+
+  <input type="file" id="file-open" accept=".psc,.txt,text/plain" hidden>
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
